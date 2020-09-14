@@ -48,7 +48,13 @@ class Params(Structure):
                 ("xIinit", c_double),
                 ("tinit", c_double),
                 ("tdur", c_double),
-                ("t1", c_double)]
+                ("t1", c_double), 
+                ("U", c_double),
+                ("taustf", c_double),
+                ("taustd", c_double),
+                ("HAGA", c_bool), 
+                ("asym", c_bool),
+                ("interstitial", c_double)]
 
 class retParams(Structure):
     _fields_ = [("alpha", c_double),
@@ -103,7 +109,16 @@ class retParams(Structure):
                 ("SNI", c_int),
                 ("NEa", c_int),
                 ("t", c_double),
-                ("t1", c_double)]
+                ("U", c_double),
+                ("taustf", c_double),
+                ("taustd", c_double),
+                ("HAGA", c_bool), 
+                ("asym", c_bool),
+                ("interstitial", c_double),
+                ("t1", c_double),
+                ("t2", c_double),
+                ("t3", c_double),
+                ("t4", c_double)]
 
 class cClassOne(object):
        
@@ -145,6 +160,9 @@ class cClassOne(object):
             # if the current field must be c_double
             if typ[1].__name__ == 'c_double':
                 setattr(self.params_c_obj, key, c_double(params[key]))
+            # if the current field must be c_bool
+            if typ[1].__name__ == 'c_bool':
+                setattr(self.params_c_obj, key, c_bool(params[key]))
         lib.setParams(self.obj, self.params_c_obj)
 
     def getState(self):

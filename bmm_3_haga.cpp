@@ -4,8 +4,6 @@
 // Comments and Python-friendly interactive implementation 
 // by Roman Koshkin (roman.koshkin@gmail.com)
 
-#define HAGA 1
-
 #include <iostream>
 #include <vector>
 #include <string>
@@ -119,7 +117,14 @@ class Model {
             double xIinit;
             double tinit;
             double tdur;   
-            double t1;        
+            double t1;
+
+			double U;
+			double taustf;
+			double taustd;
+			bool HAGA;
+			bool asym;
+			double interstitial; 
         } ParamsStructType;
 
         // returned struct
@@ -202,8 +207,17 @@ class Model {
             int SNI;
             int NEa;
             double t;
-            double t1;
-            
+
+			double U;
+			double taustf;
+			double taustd;
+			bool HAGA;
+			bool asym;
+			double interstitial;
+			double t1;
+			double t2;
+			double t3;
+			double t4;
         } retParamsStructType;
 
 		int NE, NI, N;
@@ -276,7 +290,6 @@ class Model {
         // Coefficients of STDP
         double Cp = 0.1*JEE; // must be 0.01875 (in the paper)
         double Cd = Cp*tpp/tpd; // must be 0.0075 (in the paper)
-        double g = 1.25;        // ??????
 
         //homeostatic
         //double hsig = 0.001*JEE/sqrt(10.0);
@@ -345,6 +358,7 @@ class Model {
         double t3;	// one sec after stim offset, ms
         double t4;	// itb offset
         double t5;	// itb offset + 100 s, ms
+		double g;
 
         // method declarations
         Model(int, int); // construction
@@ -359,6 +373,12 @@ class Model {
 
 		vector<double> F;
         vector<double> D;
+		double U;
+		double taustf;
+		double taustd;
+		bool HAGA;
+		bool asym;
+		double interstitial;
 
 		void STPonSpike (int);
 		void STPonNoSpike();
@@ -406,12 +426,12 @@ double Model::fd(double x, double alpha){
 }
 
 void Model::STPonSpike(int i){
-	#if HAGA == 0
-	ys[i] -= usd*ys[i];      
-	#else
-	F[i] += 0.6 * (1 - F[i]);  // U = 0.1
-	D[i] -= D[i] * F[i];        // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> <<<<<<<<<<<<<<
-	#endif
+	if (HAGA == 0) {
+		ys[i] -= usd*ys[i];      
+	} else {
+		F[i] += U * (1 - F[i]);  // U = 0.6
+		D[i] -= D[i] * F[i];
+	}
 
 	// remove it from the set of spiking neurons
 	it = spts.find( i );
@@ -426,17 +446,17 @@ void Model::STPonNoSpike() {
 	// EVERY 10 ms Becuase STD is slow, we can apply STD updates every 10th step
 	if( ( (int)floor(t/h) )%10 == 0 ){
 		for(int i = 0; i < NE; i++){
-			#if HAGA == 0
-			// ??????????????? WHY ?????????????????
-			k1 = (1.0 - ys[i])/trec; 
-			k2 = (1.0 - (ys[i]+0.5*hsd*k1))/trec;
-			k3 = (1.0 - (ys[i]+0.5*hsd*k2))/trec; 
-			k4 = (1.0 - (ys[i]+hsd*k3))/trec;
-			ys[i] += hsd*(k1 + 2.0*k2 + 2.0*k3 + k4)/6.0;
-			#else
-			F[i] += (0.6 - F[i])/600.0; //usd = 0.99
-			D[i] += (1.0 - D[i])/600.0;
-			#endif
+			if (HAGA == 0){
+				// ??????????????? WHY ?????????????????
+				k1 = (1.0 - ys[i])/trec; 
+				k2 = (1.0 - (ys[i]+0.5*hsd*k1))/trec;
+				k3 = (1.0 - (ys[i]+0.5*hsd*k2))/trec; 
+				k4 = (1.0 - (ys[i]+hsd*k3))/trec;
+				ys[i] += hsd*(k1 + 2.0*k2 + 2.0*k3 + k4)/6.0;
+			} else {
+				F[i] += (U - F[i])/taustf; //usd = 0.99
+				D[i] += (1.0 - D[i])/taustd;
+			}
 		}
 	}
 }
@@ -450,11 +470,11 @@ void Model::updateMembranePot(int i) {
 	while( it != spts.end() ){
 		//if a postsynaptic spiking neuron happens to be excitatory, 
 		if( *it < NE){
-			#if HAGA == 0
-			u += ys[*it]*Jo[i][ *it ]; 
-			#else
-			u += F[ *it ] * D[ *it ] * Jo[i][ *it ];
-			#endif
+			if (HAGA == 0) {
+				u += ys[*it]*Jo[i][ *it ]; 
+			} else {
+				u += F[ *it ] * D[ *it ] * Jo[i][ *it ];
+			}
 		//if a postsynaptic spiking neuron happens to be inhibitory, 
 		}else{
 			u += Jo[i][ *it ];
@@ -515,14 +535,19 @@ void Model::STDP(int i) {
 				/* depression happens if presynaptic spike time (t) happens AFTER
 				a postsynaptic spike time (dspts[ip][sidx])
 				BY THE WAY: HERE WE HAVE ASYMMETRIC STDP */
-				#if HAGA == 0
-				Jo[ip][i] -= Cd*fd(Jo[ip][i]/JEE, alpha)*exp( -(t-dspts[ip][sidx])/tpd );
-				// Jo[ip][i] += Cd*fd(Jo[ip][i]/JEE, alpha)*exp((t-dspts[ip][sidx])/tpd );
-				#else
-				Jo[ip][i] -= F[i] * D[i] * Cd*fd(Jo[ip][i]/JEE, alpha)*exp( -(t-dspts[ip][sidx])/tpd );
-				#endif
-
-				
+				if (HAGA == 0) {
+					if (asym == 1) {
+						Jo[ip][i] -= Cd*fd(Jo[ip][i]/JEE, alpha)*exp( -(t-dspts[ip][sidx])/tpd );
+					} else {
+						Jo[ip][i] += Cd*fd(Jo[ip][i]/JEE, alpha)*exp((t-dspts[ip][sidx])/tpd );
+					}
+				} else {
+					if (asym == 1) {
+						Jo[ip][i] -= F[i] * D[i] * Cd*fd(Jo[ip][i]/JEE, alpha)*exp( -(t-dspts[ip][sidx])/tpd );
+					} else {
+						Jo[ip][i] += F[i] * D[i] * Cd*fd(Jo[ip][i]/JEE, alpha)*exp( -(t-dspts[ip][sidx])/tpd );
+					}
+				}
 			}
 			// we force the weights to be no less than Jmin, THIS WAS NOT IN THE PAPER
 			if( Jo[ip][i] < Jmin ) Jo[ip][i] = Jmin;
@@ -545,11 +570,11 @@ void Model::STDP(int i) {
 		if( t > tinit){
 			for(int sidx = 0; sidx < dspts[j].size(); sidx++){
 				// we loop over all the spike times on the jth PRESYNAPTIC neuron
-				#if HAGA == 0
-				Jo[i][j] += g*Cp*exp( -(t-dspts[j][sidx])/tpp );
-				#else
-				Jo[i][j] += 2.0 * F[j] * D[j] * g*Cp*exp( -(t-dspts[j][sidx])/tpp ); // <<<<<<<<<<<<<<<<<<<<<<<<<
-				#endif
+				if (HAGA == 0) {
+					Jo[i][j] += g * Cp * exp( -(t-dspts[j][sidx])/tpp );
+				} else {
+					Jo[i][j] += F[j] * D[j] * g * Cp * exp( -(t-dspts[j][sidx])/tpp ); /// !!! <<<<<<<<<<<<<<<<<<<<< !!!!!!
+				}
 				// as per eq. (7) p.12, it actually should be 
 				// Jo[i][j] += g * Cp * exp((dspts[j][sidx] - t)/tpp)
 				// because dspts[j][sidx] is t_pre, and t is t_post
@@ -587,7 +612,6 @@ void Model::sim(int interval){
 			// WE PERFORM AN STDP on the chosen neuron if it spikes u > 0
 			if( u > 0 ){
 				STDP(i);
-				// END STDP *******************************************************************************************
 			}
 		}
 
@@ -991,6 +1015,13 @@ void Model::setParams(Model::ParamsStructType params){
 	t4 = t3 + itb*1000.0;	// itb offset
 	t5 = t4 + 100*1000.0;	// itb offset + 100 s, ms
 
+	U = params.U;
+	taustf = params.taustf;
+	taustd = params.taustd;
+	HAGA = params.HAGA;
+	asym = params.asym;
+	interstitial = params.interstitial; 
+
 }
 
 Model::retParamsStructType Model::getState(){
@@ -1048,7 +1079,18 @@ Model::retParamsStructType Model::getState(){
     ret_struct.SNI = SNI;
     ret_struct.NEa = NEa;
     ret_struct.t = t;
-    ret_struct.t1 = t1;
+
+	ret_struct.U = U;
+	ret_struct.taustf = taustf;
+	ret_struct.taustd = taustd;
+	ret_struct.HAGA = HAGA;
+	ret_struct.asym = asym;
+	ret_struct.interstitial = interstitial;
+	ret_struct.t1 = t1;
+	ret_struct.t2 = t2;
+	ret_struct.t3 = t3;
+	ret_struct.t4 = t4;
+
 
 	return ret_struct;
 }

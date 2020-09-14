@@ -68,9 +68,16 @@ params = {
     "xIinit": 0.01, # the probability that an inhibitory neurons spikes at the beginning of the simulation
     "tinit": 1.00, # period of time after which STDP kicks in (100.0)
     "tdur": 1000.0,
-    "t1": 1.0   # stim 1 onset (s)
+    "t1": 1.0,   # stim 1 onset (s)
+    "U": 0.6,
+	"taustf": 200,
+	"taustd": 500,
+	"HAGA": True,
+	"asym": True,
+    "interstitial": 2.0
 } 
 
+params['HAGA'] = False
 NE = 1800
 NI = 360
 
@@ -101,7 +108,7 @@ for var_name in params.keys():
 m.setParams(params)
 
 ret = m.getState()
-[(attr, getattr(ret, attr)) for attr in dir(ret) if attr[0]!="_"]
+dd = [(attr, getattr(ret, attr)) for attr in dir(ret) if attr[0]!="_"]
 
 sim_t = 5
 snapshotEveryMs = 1000

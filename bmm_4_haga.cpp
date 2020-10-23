@@ -22,9 +22,9 @@
 using namespace std;
 
 // to complile
-// g++ -std=gnu++11 -O3 -dynamiclib -ftree-vectorize -march=native -mavx bmm_3_haga.cpp -o ./bmm.dylib
-// sudo /usr/bin/g++ -std=gnu++11 -Ofast -shared -fPIC -ftree-vectorize -march=native -mavx bmm_3_haga.cpp -o ./bmm.dylib
-// icc -std=gnu++11 -O3 -shared -fPIC bmm_3_haga.cpp -o ./bmm.dylib
+// g++ -std=gnu++11 -O3 -dynamiclib -ftree-vectorize -march=native -mavx bmm_4_haga.cpp -o ./bmm.dylib
+// sudo /usr/bin/g++ -std=gnu++11 -Ofast -shared -fPIC -ftree-vectorize -march=native -mavx bmm_4_haga.cpp -o ./bmm.dylib
+// icc -std=gnu++11 -O3 -shared -fPIC bmm_4_haga.cpp -o ./bmm.dylib
 
 struct Timer
 {
@@ -53,8 +53,6 @@ class Model {
             double alpha;
             double usd; 
             double JEI ;
-            int ita;
-            int itb;
 
             double T;
             double h;
@@ -118,15 +116,14 @@ class Model {
             double xEinit;
             double xIinit;
             double tinit;
-            double tdur;   
-            double t1;
 
 			double U;
 			double taustf;
 			double taustd;
 			bool HAGA;
 			bool asym;
-			double interstitial; 
+            int nstim;
+            double* sm;
         } ParamsStructType;
 
         // returned struct
@@ -134,8 +131,6 @@ class Model {
             double alpha;
             double usd; 
             double JEI ;
-            int ita;
-            int itb;
 
             double T;
             double h;
@@ -199,7 +194,6 @@ class Model {
             double xEinit;
             double xIinit;
             double tinit;
-            double tdur;
 
             double Jmin;
             double Jmax;
@@ -215,13 +209,9 @@ class Model {
 			double taustd;
 			bool HAGA;
 			bool asym;
-			double interstitial;
-			double t1;
-			double t2;
-			double t3;
-			double t4;
         } retParamsStructType;
 
+        int nstim;
 		int NE, NI, N;
 		int SNE, SNI; //how many neurons get updated per time step
 		int NEa; // Exact number of excitatory neurons stimulated externally
@@ -233,8 +223,6 @@ class Model {
         double alpha = 50.0;    // Degree of log-STDP (50.0)
         double usd = 0.1;       // Release probability of a synapse (0.05 - 0.5)
         double JEI = 0.15;      // 0.15 or 0.20
-        int ita = 90;           // stim A duration, s
-        int itb = 30;           // stim B duration, s
 
         double pi = 3.14159265;
         double e = 2.71828182;
@@ -307,12 +295,10 @@ class Model {
         double xEinit = 0.02; // the probability that an excitatory neurons spikes at the beginning of the simulation
         double xIinit = 0.01; // the probability that an inhibitory neurons spikes at the beginning of the simulation
         double tinit = 100.0; // period of time after which STDP kicks in
-        double tdur = 1000.0; // time between the stimulations (of which there are two)
 
         vector<double> dvec;
         vector<int> ivec;
         deque<int> ideque;
-
 
         vector< deque<int> > dspts;
         vector<int> x;
@@ -334,32 +320,14 @@ class Model {
         // we initialize (only excitatory) neurons with values of synaptic efficiency
         vector<double> ys;
 
-        vector< vector<double> > wqqcnt;
-        vector<int> ptn_inv; // Excitatory neurons are split into 3 types 0 (500), 1 (500), 2 (1500)
-
         int ialpha;
         int iusd;
         int iJEI;
 
-        ostringstream ossr; 
-        ostringstream ossw; // make a string stream
-        ostringstream ossd;
-
-        string fstrr;
-        string fstrw;
-        string fstrd;
-
 		// classes to stream data to files
         ofstream ofsr;
-        ofstream ofsw;
-        ofstream ofsd;
         
         double tauh; 	// decay time of homeostatic plasticity, in ms
-        double t1;		// stimulus onset, ms
-        double t2;	// stimulus offset, ms
-        double t3;	// one sec after stim offset, ms
-        double t4;	// itb offset
-        double t5;	// itb offset + 100 s, ms
 		double g;
 
         // method declarations
@@ -380,7 +348,6 @@ class Model {
 		double taustd;
 		bool HAGA;
 		bool asym;
-		double interstitial;
 
 		void STPonSpike (int);
 		void STPonNoSpike();
@@ -394,9 +361,10 @@ class Model {
 		double* ptr_F;
 		double* ptr_D;
 		double* ptr_ys;
-	
-    private:
-        double xx;
+        
+        // flexible arrays can only be declared at the end of the class !!
+        // double sm[];
+		double* sm;
 };
 
 double Model::dice(){
@@ -493,30 +461,16 @@ void Model::updateMembranePot(int i) {
 }
 
 void Model::checkIfStim(int i) {
-	// at t1 < t < t2 we inject an external stimulus current into the first group of excitatory neurons 
-	if( (t1 < t && t < t2) && ptn_inv[i]==1 ) {
-		u += Ip;
-	}
-	
-	// Stimulus taper-off
-	// if( (t2 < t && t < t2+tdur) && ptn_inv[i]==1 ) {
-	// 	u += Ip*(t2+tdur - t)/tdur;
-	// }
-
-	// at t3 < t < t4 we inject an external stimulus current into the second group of excitatory neurons 
-	if( (t3 < t && t < t4) && ptn_inv[i]==2 ) {
-		u += Ip;
-	}
-	
-	// Stimulus taper-off
-	// if( (t4 < t && t < t4+tdur) && ptn_inv[i]==2 ) {
-	// 	u += Ip*(t4+tdur - t)/tdur;
-	// } 
-
-	// partial stim
-	// if( (11000 < t && t < 11500) && (100 < i && i < 300) ) {
-	// 	u += Ip;
-	// }
+	for(int stim = 0; stim < nstim; stim++) {
+        if( (sm[4*stim] <= t) && 
+            (t < sm[4*stim + 1]) && 
+            ((int)(sm[4*stim + 2]) <= i) && 
+            (i < (int)(sm[4*stim + 3]))
+          ) {
+            u += Ip;
+			// std::cout << "stim @ t=" << t << " on neuron " << i << std::endl;
+        }
+    }
 }
 
 void Model::STDP(int i) {
@@ -737,56 +691,7 @@ void Model::sim(int interval){
 		if( ( (int)floor(t/h) )%(1000*100) == 0 ){
 
 			tidx += 1; // we count the number of 1s cycles
-			// if( tidx%100 < 10 || (t4 < t && t < t5) ){ // if the time is less than 1000s, OR t4 < t < t5
-			// 	trtof = true;
-			// }else{
-			// 	trtof = false;
-			// }
-			
-			// every 10s
-			if( ( (int)floor(t/h) )%(10000*100) == 0 ){
-
-				// std::cout << "t: " << t << std::endl;
-
-				// create a 3 x 3 matrix of doubles that will hold sumtotals of weights from one type to another
-				vector< vector<double> > wqq;
-				for(int i = 0; i < 3; i++){
-					wqq.push_back( dvec );
-					for( j = 0; j < 3; j++) {
-						wqq[i].push_back(0.0);
-					}
-				}
-				for(int i = 0; i < NE; i++){
-					for(int j = 0; j < NE; j++){
-						if( abs(Jo[i][j]) > Jepsilon ) {
-							// compute the total weights by type of neuron (1,2,0) in the 3 x 3 matrix
-							wqq[ ptn_inv[i] ][ ptn_inv[j] ] += Jo[i][j];
-						}
-					}
-				}
-				for(int i = 0; i < 3; i++){
-					for( j = 0; j < 3; j++) {
-						// report the average weights by type
-						ofsd << wqq[i][j]/wqqcnt[i][j] << " ";
-					}
-				}
-				ofsd << endl;
-			}
-
-			// we log the weight matrix @ 151, 900, 1200 and 1799 s into the sim
-			if( tidx == (int)floor(t4/1000.0 + 1.01) || tidx == 900 || tidx == 1200 || tidx == 1799 ){
-				std::cout << "logging weights " << std::endl;
-				for(int i = 0; i < N; i++){
-					for(j = 0; j < N; j++){
-						if( abs(Jo[i][j]) > Jepsilon ) {
-							// write weights
-							ofsw << Jo[i][j] << " " << j << " ";
-						} 
-					}
-					ofsw << endl;
-				}
-			}
-			
+						
 			// report sim time every 0.1s of sim (not astronomical) time
 			if( ( (int)floor(t/h) )%(100*100) == 0 ){
 				// cout << t/1000.0 << endl;
@@ -798,7 +703,6 @@ void Model::sim(int interval){
 				++s;
 				++it;
 			}
-			//cout << s << endl;
 
 			// exit if either no neurons are spiking or too many spiking after t > 200 ms
 			if( s == 0 || (s > 1.0*NE && t > 200.0) ) {
@@ -872,11 +776,13 @@ Model::Model(int _NE, int _NI){
 		ys.push_back(1.0/(1.0 + usd*0.05*trec/tmE));
 	}
 	
-	// allocate heap memory for the array of pointers (once per model instantiation)
+	// allocate heap memory for the pointers (once per model instantiation)
 	ptr_Jo = new double[N*N]; // ?
 	ptr_F = new double[NE];
 	ptr_D = new double[NE];
 	ptr_ys = new double[NE];
+	sm = new double[100];
+
 	// since no suitable conversion function from "std::vector<double, std::allocator<double>>" 
 	// to "double *" exists, we need to copy the addresses one by one
 	for (int i=0; i<NE; i++) {
@@ -906,42 +812,12 @@ Model::Model(int _NE, int _NI){
 
 	ofsr.open( "spike_times.txt" );
 	ofsr.precision(10);
-	
-	// make a string
-	// ossw << "binary_model_w_al" << ialpha <<"_u"<< iusd <<"_i"<< iJEI <<"_a"<< ita <<"_b"<< itb << ".txt";
-	// fstrw = ossw.str();
-	// ofsw.open( fstrw.c_str() );
-	ofsw.open("weights.txt");
-	
-	ossd << "binary_model_d_al" << ialpha <<"_u"<< iusd <<"_i"<< iJEI <<"_a"<< ita <<"_b"<< itb << ".txt"; 
-	
-	fstrd = ossd.str();
-	ofsd.open( fstrd.c_str() );
-
-	// tauh = itauh*1000.0; 	// decay time of homeostatic plasticity, in ms
-	// t1 = 30*1000.0;			// stimulus onset, ms
-	// t2 = t1 + ita*1000.0;	// stimulus offset, ms
-	// t3 = t2 + 3.0*1000.0;	// one sec after stim offset, ms
-	// t4 = t3 + itb*1000.0;	// itb offset
-	// t5 = t4 + 100*1000.0;	// itb offset + 100 s, ms
-	
-	
-	for(int i = 0; i < NEa; i++) ptn_inv.push_back(1);
-	for(int i = NEa; i < 2*NEa; i++) ptn_inv.push_back(2);
-	for(int i = 2*NEa; i < NE; i++) ptn_inv.push_back(0);
-	
-	for(int i = 0; i < 3; i++){
-		wqqcnt.push_back(dvec);
-		for(int i2 = 0; i2 < 3; i2++) wqqcnt[i].push_back(0.0);
-	}
 
 	for(int i = 0; i < NE; i++){
 		Jinidx.push_back(ivec); // shape = (3000, max3000)
 		for(int i2 = 0; i2 < NE; i2++){
 			if( Jo[i][i2] > Jepsilon ){
 				Jinidx[i].push_back( i2 );
-				wqqcnt[ ptn_inv[i] ][ ptn_inv[i2] ] += 1.0; /* a 3 (type0-2) x 3 (type0-2) matrix whose
-				entries are the counts of weights > Jepsilon */
 			}
 		}
 	}
@@ -980,12 +856,8 @@ void Model::setParams(Model::ParamsStructType params){
 	alpha = params.alpha;   // Degree of log-STDP (50.0)
 	usd = params.usd;       // Release probability of a synapse (0.05 - 0.5)
 	JEI = params.JEI;       // 0.15 or 0.20
-	ita = params.ita;       // stim A duration, s
-	itb = params.itb;       // stim B duration, s
 	T = params.T;       // simulation time, ms (1800*1000.0)
 	h = params.h;       // time step, ms ??????
-	// NE = params.NE;     // Nexc
-	// NI = params.NI;     // Ninh
 	cEE = params.cEE; // 0.2
 	cIE = params.cIE; // 0.2
 	cEI = params.cEI; // 0.5
@@ -1020,11 +892,8 @@ void Model::setParams(Model::ParamsStructType params){
 	xEinit = params.xEinit; // prob that an exc neurons spikes at the beginning of the simulation 0.02
 	xIinit = params.xIinit; // prob that an inh neurons spikes at the beginning of the simulation 0.01
 	tinit = params.tinit;   // period of time after which STDP kicks in 100.0
-	tdur = params.tdur;     // time between the stimulations (of which there are two) 1000.0
-    t1 = params.t1;         // stim 1 onset
 
 	// recalculate values that depend on the parameters 
-	// N = NE + NI;        //
 	SNE = (int)floor(NE*h/tmE + 0.001);
 	SNI = (int)floor(NI*h/tmI + 0.001);
 	Jmax = 5.0 * JEE;         // ???
@@ -1035,22 +904,20 @@ void Model::setParams(Model::ParamsStructType params){
 	NEa = (int)floor(NE*a+0.01);    // Exact number of excitatory neurons stimulated externally
 	pmax = NE/NEa;
 
-	interstitial = params.interstitial; 
-
 	tauh = itauh*1000.0; 	// decay time of homeostatic plasticity, in ms
-	t1 = t1*1000.0;			// stimulus onset, ms
-	t2 = t1 + ita*1000.0;	// stimulus offset, ms
-	t3 = t2 + interstitial * 1000.0;	// one sec after stim offset, ms
-	t4 = t3 + itb*1000.0;	// itb offset
-	t5 = t4 + 100*1000.0;	// itb offset + 100 s, ms
 
 	U = params.U;
 	taustf = params.taustf;
 	taustd = params.taustd;
 	HAGA = params.HAGA;
 	asym = params.asym;
-	
-
+    nstim = params.nstim;
+    // 4 variables per row (t_onset, t_offset, neuronA, neuronB)
+    for (int stim=0; stim<nstim; stim++) {
+        for (int var=0; var<4; var++) {
+            sm[4*stim + var] = params.sm[4*stim + var];
+        }
+    }
 }
 
 Model::retParamsStructType Model::getState(){
@@ -1058,8 +925,6 @@ Model::retParamsStructType Model::getState(){
 	ret_struct.alpha = alpha;
 	ret_struct.usd = usd;
 	ret_struct.JEI = JEI;
-	ret_struct.ita = ita;
-	ret_struct.itb = itb;
 	ret_struct.T = T;
 	ret_struct.h = h;
 	ret_struct.NE = NE;
@@ -1098,7 +963,6 @@ Model::retParamsStructType Model::getState(){
 	ret_struct.xEinit = xEinit;
 	ret_struct.xIinit = xIinit;
 	ret_struct.tinit = tinit;
-	ret_struct.tdur = tdur;
 
     ret_struct.Jmin = Jmin;
     ret_struct.Jmax = Jmax;
@@ -1114,12 +978,6 @@ Model::retParamsStructType Model::getState(){
 	ret_struct.taustd = taustd;
 	ret_struct.HAGA = HAGA;
 	ret_struct.asym = asym;
-	ret_struct.interstitial = interstitial;
-	ret_struct.t1 = t1;
-	ret_struct.t2 = t2;
-	ret_struct.t3 = t3;
-	ret_struct.t4 = t4;
-
 
 	return ret_struct;
 }
